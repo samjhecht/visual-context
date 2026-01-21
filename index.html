@@ -191,21 +191,49 @@ Use these directories for different file types:
         }
       },
       knownProjects: [
-        { encoded: '-Users-juliushecht-medb', decoded: '/Users/juliushecht/medb' },
-        { encoded: '-Users-juliushecht-medb-projects-wrangler', decoded: '/Users/juliushecht/medb/projects/wrangler' },
-        { encoded: '-Users-juliushecht-medb-code-wrangler', decoded: '/Users/juliushecht/medb/code/wrangler' }
+        { path: '/Users/juliushecht/medb', lastUsed: Date.now(), hasClaudeMd: false },
+        { path: '/Users/juliushecht/medb/projects/wrangler', lastUsed: Date.now() - 10000, hasClaudeMd: true },
+        { path: '/Users/juliushecht/medb/code/wrangler', lastUsed: 0, hasClaudeMd: true }
       ]
     };
 
     // Populate project selector
-    function populateProjects(projects) {
+    function populateProjects(projects, currentCwd = null) {
       cwdSelect.innerHTML = '<option value="">Select a project...</option>';
-      projects.forEach(proj => {
+
+      // Projects are already sorted by lastUsed (most recent first)
+      projects.forEach((proj, index) => {
         const option = document.createElement('option');
-        option.value = proj.decoded;
-        option.textContent = proj.decoded;
+        const path = proj.path || proj.decoded; // Handle both formats
+        option.value = path;
+
+        // Show relative path for cleaner display
+        let displayPath = path;
+        if (path.startsWith('/Users/')) {
+          displayPath = '~' + path.slice(path.indexOf('/', 7));
+        }
+
+        // Add indicators
+        const indicators = [];
+        if (proj.hasClaudeMd) indicators.push('[M]'); // Has CLAUDE.md
+        if (index === 0 && proj.lastUsed) indicators.push('[Recent]');
+
+        option.textContent = indicators.length
+          ? `${displayPath} ${indicators.join(' ')}`
+          : displayPath;
+
         cwdSelect.appendChild(option);
       });
+
+      // Auto-select: current cwd > most recent > first with CLAUDE.md
+      if (currentCwd) {
+        cwdSelect.value = currentCwd;
+      } else if (projects.length > 0) {
+        const mostRecent = projects[0];
+        if (mostRecent.lastUsed) {
+          cwdSelect.value = mostRecent.path || mostRecent.decoded;
+        }
+      }
     }
 
     // Load context data
@@ -228,7 +256,8 @@ Use these directories for different file types:
         }
 
         const normalized = loader.loadFromData(data);
-        populateProjects(data.knownProjects || SAMPLE_DATA.knownProjects);
+        const currentCwd = data.metadata?.targetCwd || null;
+        populateProjects(data.knownProjects || SAMPLE_DATA.knownProjects, currentCwd);
         renderer.render(normalized.layers);
       } catch (error) {
         console.error('Failed to load context:', error);

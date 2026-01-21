@@ -143,28 +143,56 @@ list_dir_json "$TARGET_CWD/.claude/agents"
 echo '},'
 
 # 10. Known project directories (for CWD picker)
+# Read from ~/.claude.json which has richer project data
+CLAUDE_JSON="$HOME/.claude.json"
 echo '"knownProjects": '
-if [ -d "$CLAUDE_DIR/projects" ]; then
-    python3 -c "
+python3 -c "
 import json
 import os
+
+claude_json_path = '$CLAUDE_JSON'
 projects_dir = '$CLAUDE_DIR/projects'
 projects = []
-for item in os.listdir(projects_dir):
-    if item.startswith('.'):
-        continue
-    # Decode path from directory name
-    decoded = '/' + item.replace('-', '/')
-    projects.append({
-        'encoded': item,
-        'decoded': decoded,
-        'path': os.path.join(projects_dir, item)
-    })
-projects.sort(key=lambda x: x['decoded'])
+
+# Try to read from ~/.claude.json first (has usage stats)
+if os.path.exists(claude_json_path):
+    try:
+        with open(claude_json_path, 'r') as f:
+            data = json.load(f)
+
+        proj_data = data.get('projects', {})
+        for path, info in proj_data.items():
+            # Get last session timestamp if available
+            last_used = info.get('exampleFilesGeneratedAt', 0)
+            projects.append({
+                'path': path,
+                'lastUsed': last_used,
+                'lastCost': info.get('lastCost', 0),
+                'hasClaudeMd': os.path.exists(os.path.join(path, 'CLAUDE.md'))
+            })
+    except Exception as e:
+        pass
+
+# Fallback: also check ~/.claude/projects/ directory
+if os.path.exists(projects_dir):
+    existing_paths = {p['path'] for p in projects}
+    for item in os.listdir(projects_dir):
+        if item.startswith('.'):
+            continue
+        # The encoding replaces / with - and strips leading -
+        # So -Users-foo-bar means /Users/foo/bar
+        decoded = '/' + item.lstrip('-').replace('-', '/')
+        if decoded not in existing_paths:
+            projects.append({
+                'path': decoded,
+                'lastUsed': 0,
+                'lastCost': 0,
+                'hasClaudeMd': os.path.exists(os.path.join(decoded, 'CLAUDE.md'))
+            })
+
+# Sort by most recently used
+projects.sort(key=lambda x: x.get('lastUsed', 0), reverse=True)
 print(json.dumps(projects))
 "
-else
-    echo '[]'
-fi
 
 echo '}'
