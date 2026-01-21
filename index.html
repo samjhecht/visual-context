@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visual Context - Claude Code Context Visualizer</title>
+  <link rel="stylesheet" href="src/styles/variables.css">
+  <link rel="stylesheet" href="src/styles/base.css">
+  <link rel="stylesheet" href="src/styles/components.css">
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <div class="header-logo"></div>
+      <h1 class="header-title">Visual Context</h1>
+      <span class="header-version">v0.1.0</span>
+    </div>
+    <div class="filters">
+      <div class="filter-group">
+        <label class="filter-label">Working Directory</label>
+        <select id="cwd-select" class="filter-select">
+          <option value="">Select a project...</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label class="filter-label">Agent Profile</label>
+        <select id="agent-select" class="filter-select">
+          <option value="default">Default</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+    <div class="toolbar">
+      <button class="toolbar-btn" onclick="expandAll()">Expand All</button>
+      <button class="toolbar-btn" onclick="collapseAll()">Collapse All</button>
+      <button class="toolbar-btn" onclick="refreshData()">Refresh</button>
+    </div>
+    <div id="layers-container">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+      </div>
+    </div>
+  </main>
+
+  <script type="module">
+    import { ContextLoader } from './src/data/context-loader.js';
+    import { LayerRenderer } from './src/components/layer-renderer.js';
+
+    // Initialize
+    const container = document.getElementById('layers-container');
+    const cwdSelect = document.getElementById('cwd-select');
+    const agentSelect = document.getElementById('agent-select');
+
+    const loader = new ContextLoader();
+    const renderer = new LayerRenderer(container);
+
+    // Global functions for onclick handlers
+    window.toggleLayer = (id) => renderer.toggleLayer(id);
+    window.expandAll = () => renderer.expandAll();
+    window.collapseAll = () => renderer.collapseAll();
+
+    window.expandFileRef = async (element, filename) => {
+      const existing = element.parentElement.querySelector('.file-ref-content');
+      if (existing) {
+        existing.remove();
+        return;
+      }
+
+      const content = document.createElement('div');
+      content.className = 'file-ref-content';
+      content.textContent = `Loading ${filename}...`;
+      element.parentElement.insertBefore(content, element.nextSibling);
+
+      // In a real implementation, this would load the file
+      // For now, show a placeholder
+      setTimeout(() => {
+        content.textContent = `[File content for ${filename} would be loaded here]`;
+      }, 300);
+    };
+
+    window.refreshData = () => loadContextData();
+
+    // Sample data for demonstration (when not loading from scan script)
+    const SAMPLE_DATA = {
+      metadata: {
+        scannedAt: new Date().toISOString(),
+        targetCwd: '/Users/juliushecht/medb',
+        claudeDir: '/Users/juliushecht/.claude'
+      },
+      systemPrompt: {
+        exists: true,
+        path: '~/.claude-config/system_prompt.md',
+        content: `You are Claude Code, Anthropic's official CLI for Claude.
+You are an interactive CLI tool that helps users with software engineering tasks. Use the instructions below and the tools available to you to assist the user.
+
+IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes.
+
+IMPORTANT: You must NEVER generate or guess URLs for the user unless you are confident that the URLs are for helping the user with programming.
+
+If the user asks for help or wants to give feedback inform them of the following:
+- /help: Get help with using Claude Code
+- To give feedback, users should report the issue at https://github.com/anthropics/claude-code/issues
+
+# Tone and style
+- Only use emojis if the user explicitly requests it.
+- Your output will be displayed on a command line interface. Your responses should be short and concise.
+- Output text to communicate with the user; all text you output outside of tool use is displayed to the user.
+- NEVER create files unless they're absolutely necessary for achieving your goal.
+
+# Professional objectivity
+Prioritize technical accuracy and truthfulness over validating the user's beliefs.
+
+# Task Management
+You have access to the TodoWrite tools to help you manage and plan tasks.
+
+# Tool usage policy
+- When doing file search, prefer to use the Task tool in order to reduce context usage.
+- You should proactively use the Task tool with specialized agents when the task at hand matches the agent's description.
+- You can call multiple tools in a single response.
+
+[... additional system prompt content ...]`
+      },
+      globalMemory: {
+        exists: true,
+        path: '/Users/juliushecht/.claude/CLAUDE.md',
+        content: `- **NO EMOJIS**: Do not use emojis in code, documentation, README files, UI text, commit messages, or any other written output unless explicitly requested.
+
+- never say something is production-ready unless explicitly asked
+
+- If the project you're working on has tests, always run them yourself before telling the user that things are ready to go.
+
+## Process Management - CRITICAL
+
+**NEVER kill processes that use Electron generically** - this kills VSCode and other unrelated apps.
+
+## File Organization Guidelines
+
+**IMPORTANT: When creating analysis, documentation, or reference files, DO NOT create them at project root.**
+
+Use these directories for different file types:
+
+**\`memos/\` - Reference Material & Lessons Learned**
+- Root cause analyses (RCA-*.md)
+- Post-mortems and incident reports
+- Technical investigations
+
+**\`docs/\` - User-Facing Documentation**
+- Product documentation
+- User guides and tutorials
+
+**\`devops/docs/\` - Developer/Maintainer Documentation**
+- Architecture decision records (ADR)
+- Deployment procedures`
+      },
+      projectMemory: {
+        exists: false,
+        path: '/Users/juliushecht/medb/CLAUDE.md'
+      },
+      settings: {
+        hooks: {
+          SessionStart: []
+        },
+        enabledPlugins: {
+          'wrangler@samjhecht-plugins': true,
+          'medb-claude-code-plugin@medb-plugins': true
+        },
+        mcpServers: {
+          'chrome-devtools': {
+            command: 'npx',
+            args: ['-y', 'chrome-devtools-mcp@latest']
+          },
+          'vercel': {
+            type: 'http',
+            url: 'https://mcp.vercel.com/'
+          }
+        }
+      },
+      installedPlugins: {
+        version: 2,
+        plugins: {
+          'wrangler@samjhecht-plugins': [{
+            version: '1.2.0',
+            installPath: '/Users/juliushecht/.claude/plugins/cache/samjhecht-plugins/wrangler/1.2.0'
+          }],
+          'medb-claude-code-plugin@medb-plugins': [{
+            version: '1.0.0',
+            installPath: '/Users/juliushecht/.claude/plugins/cache/medb-plugins/medb-claude-code-plugin/1.0.0'
+          }]
+        }
+      },
+      knownProjects: [
+        { encoded: '-Users-juliushecht-medb', decoded: '/Users/juliushecht/medb' },
+        { encoded: '-Users-juliushecht-medb-projects-wrangler', decoded: '/Users/juliushecht/medb/projects/wrangler' },
+        { encoded: '-Users-juliushecht-medb-code-wrangler', decoded: '/Users/juliushecht/medb/code/wrangler' }
+      ]
+    };
+
+    // Populate project selector
+    function populateProjects(projects) {
+      cwdSelect.innerHTML = '<option value="">Select a project...</option>';
+      projects.forEach(proj => {
+        const option = document.createElement('option');
+        option.value = proj.decoded;
+        option.textContent = proj.decoded;
+        cwdSelect.appendChild(option);
+      });
+    }
+
+    // Load context data
+    async function loadContextData(cwd = null) {
+      container.innerHTML = '<div class="loading"><div class="loading-spinner"></div></div>';
+
+      try {
+        // Try to load from context.json if it exists, otherwise use sample data
+        let data;
+        try {
+          const response = await fetch('context.json');
+          if (response.ok) {
+            data = await response.json();
+          } else {
+            throw new Error('Not found');
+          }
+        } catch {
+          // Use sample data for demonstration
+          data = SAMPLE_DATA;
+        }
+
+        const normalized = loader.loadFromData(data);
+        populateProjects(data.knownProjects || SAMPLE_DATA.knownProjects);
+        renderer.render(normalized.layers);
+      } catch (error) {
+        console.error('Failed to load context:', error);
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-title">Failed to load context</div>
+            <p>${error.message}</p>
+          </div>
+        `;
+      }
+    }
+
+    // Event listeners
+    cwdSelect.addEventListener('change', (e) => {
+      if (e.target.value) {
+        loadContextData(e.target.value);
+      }
+    });
+
+    // Initial load
+    loadContextData();
+  </script>
+</body>
+</html>

@@ -1,0 +1,170 @@
+#!/bin/bash
+# scan-context.sh - Gather Claude Code context data for visualization
+# Usage: ./scan-context.sh [working_directory]
+# Outputs JSON to stdout
+
+set -e
+
+CLAUDE_DIR="$HOME/.claude"
+TARGET_CWD="${1:-$(pwd)}"
+
+# Helper to encode path for Claude's project directory naming
+encode_path() {
+    echo "$1" | sed 's/\//-/g' | sed 's/^-//'
+}
+
+# Helper to read file content as JSON string
+read_file_json() {
+    local file="$1"
+    if [ -f "$file" ]; then
+        # Read file and escape for JSON
+        python3 -c "
+import json
+import sys
+try:
+    with open('$file', 'r') as f:
+        content = f.read()
+    print(json.dumps({'exists': True, 'content': content, 'path': '$file'}))
+except Exception as e:
+    print(json.dumps({'exists': False, 'error': str(e), 'path': '$file'}))
+"
+    else
+        echo '{"exists": false, "path": "'"$file"'"}'
+    fi
+}
+
+# Helper to list directory contents as JSON array
+list_dir_json() {
+    local dir="$1"
+    if [ -d "$dir" ]; then
+        python3 -c "
+import json
+import os
+items = []
+for item in os.listdir('$dir'):
+    full_path = os.path.join('$dir', item)
+    items.append({
+        'name': item,
+        'path': full_path,
+        'isDir': os.path.isdir(full_path)
+    })
+print(json.dumps(items))
+"
+    else
+        echo '[]'
+    fi
+}
+
+# Extract file references from CLAUDE.md content
+extract_file_refs() {
+    local content="$1"
+    python3 -c "
+import re
+import json
+content = '''$content'''
+# Match @FILE patterns (common in CLAUDE.md for referencing other files)
+refs = re.findall(r'@([A-Za-z0-9_\-./]+\.(?:md|txt|json|yaml|yml))', content)
+# Also match backtick references like \`TESTING.md\`
+refs += re.findall(r'\\\`([A-Za-z0-9_\-./]+\.(?:md|txt))\\\`', content)
+print(json.dumps(list(set(refs))))
+"
+}
+
+# Main data collection
+echo '{'
+
+# 1. Metadata
+echo '"metadata": {'
+echo "  \"scannedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\","
+echo "  \"targetCwd\": \"$TARGET_CWD\","
+echo "  \"claudeDir\": \"$CLAUDE_DIR\""
+echo '},'
+
+# 2. System Prompt (reference copy)
+SYSTEM_PROMPT_REF="$HOME/medb/projects/wrangler/.claude-config/system_prompt.md"
+echo '"systemPrompt": '
+read_file_json "$SYSTEM_PROMPT_REF"
+echo ','
+
+# 3. Global CLAUDE.md
+GLOBAL_CLAUDE="$CLAUDE_DIR/CLAUDE.md"
+echo '"globalMemory": '
+read_file_json "$GLOBAL_CLAUDE"
+echo ','
+
+# 4. Project CLAUDE.md (at target cwd)
+PROJECT_CLAUDE="$TARGET_CWD/CLAUDE.md"
+echo '"projectMemory": '
+read_file_json "$PROJECT_CLAUDE"
+echo ','
+
+# 5. Settings (hooks, MCP servers, enabled plugins)
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+echo '"settings": '
+if [ -f "$SETTINGS_FILE" ]; then
+    cat "$SETTINGS_FILE"
+else
+    echo '{}'
+fi
+echo ','
+
+# 6. Local settings (output styles, etc)
+LOCAL_SETTINGS="$TARGET_CWD/.claude/settings.local.json"
+echo '"localSettings": '
+read_file_json "$LOCAL_SETTINGS"
+echo ','
+
+# 7. Output styles
+echo '"outputStyles": {'
+echo '  "user": '
+list_dir_json "$CLAUDE_DIR/output-styles"
+echo ','
+echo '  "project": '
+list_dir_json "$TARGET_CWD/.claude/output-styles"
+echo '},'
+
+# 8. Installed plugins
+PLUGINS_FILE="$CLAUDE_DIR/plugins/installed_plugins.json"
+echo '"installedPlugins": '
+if [ -f "$PLUGINS_FILE" ]; then
+    cat "$PLUGINS_FILE"
+else
+    echo '{}'
+fi
+echo ','
+
+# 9. Available agents
+echo '"agents": {'
+echo '  "user": '
+list_dir_json "$CLAUDE_DIR/agents"
+echo ','
+echo '  "project": '
+list_dir_json "$TARGET_CWD/.claude/agents"
+echo '},'
+
+# 10. Known project directories (for CWD picker)
+echo '"knownProjects": '
+if [ -d "$CLAUDE_DIR/projects" ]; then
+    python3 -c "
+import json
+import os
+projects_dir = '$CLAUDE_DIR/projects'
+projects = []
+for item in os.listdir(projects_dir):
+    if item.startswith('.'):
+        continue
+    # Decode path from directory name
+    decoded = '/' + item.replace('-', '/')
+    projects.append({
+        'encoded': item,
+        'decoded': decoded,
+        'path': os.path.join(projects_dir, item)
+    })
+projects.sort(key=lambda x: x['decoded'])
+print(json.dumps(projects))
+"
+else
+    echo '[]'
+fi
+
+echo '}'

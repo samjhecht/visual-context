@@ -1,0 +1,13 @@
+# Generated data (contains user-specific paths)
+context.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
