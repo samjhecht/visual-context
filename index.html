@@ -243,17 +243,23 @@ Use these directories for different file types:
       try {
         // Try to load from context.json if it exists, otherwise use sample data
         let data;
+        let dataSource = 'sample';
         try {
           const response = await fetch('context.json');
           if (response.ok) {
             data = await response.json();
+            dataSource = 'context.json';
           } else {
             throw new Error('Not found');
           }
-        } catch {
+        } catch (fetchError) {
           // Use sample data for demonstration
+          // Note: fetch() often fails on file:// URLs due to CORS
+          console.log('Using sample data (fetch failed:', fetchError.message, ')');
+          console.log('Tip: Run "python3 -m http.server 8080" and open http://localhost:8080');
           data = SAMPLE_DATA;
         }
+        console.log('Data source:', dataSource);
 
         const normalized = loader.loadFromData(data);
         const currentCwd = data.metadata?.targetCwd || null;
