@@ -33,6 +33,11 @@ export class LayerRenderer {
     div.className = `layer layer--${layer.type}`;
     div.dataset.layerId = layer.id;
 
+    // Apply collapsed state if specified
+    if (layer.collapsed) {
+      div.classList.add('collapsed');
+    }
+
     div.innerHTML = `
       <div class="layer-header" onclick="window.toggleLayer('${layer.id}')">
         <div class="layer-title-group">
@@ -59,11 +64,45 @@ export class LayerRenderer {
    * Render layer content based on type
    */
   renderLayerContent(layer) {
-    if (layer.isJson) {
-      return this.renderJsonContent(layer.content);
+    let html = '';
+
+    // Add metadata section if present (e.g., for output styles)
+    if (layer.metadata && Object.keys(layer.metadata).length > 0) {
+      html += this.renderMetadataSection(layer.metadata);
     }
 
-    return this.renderCodeContent(layer.content, layer.fileRefs);
+    if (layer.isJson) {
+      html += this.renderJsonContent(layer.content);
+    } else {
+      html += this.renderCodeContent(layer.content, layer.fileRefs);
+    }
+
+    return html;
+  }
+
+  /**
+   * Render metadata section
+   */
+  renderMetadataSection(metadata) {
+    const metadataEntries = Object.entries(metadata)
+      .map(([key, value]) => {
+        const displayKey = key.replace(/-/g, ' ');
+        const displayValue = typeof value === 'boolean' ? (value ? 'Yes' : 'No') : this.escapeHtml(String(value));
+        return `
+          <div class="metadata-item">
+            <span class="metadata-key">${this.escapeHtml(displayKey)}:</span>
+            <span class="metadata-value">${displayValue}</span>
+          </div>
+        `;
+      })
+      .join('');
+
+    return `
+      <div class="metadata-section">
+        <div class="metadata-title">Configuration</div>
+        ${metadataEntries}
+      </div>
+    `;
   }
 
   /**

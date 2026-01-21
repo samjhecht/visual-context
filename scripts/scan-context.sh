@@ -80,10 +80,48 @@ echo "  \"targetCwd\": \"$TARGET_CWD\","
 echo "  \"claudeDir\": \"$CLAUDE_DIR\""
 echo '},'
 
-# 2. System Prompt (reference copy)
-SYSTEM_PROMPT_REF="$HOME/medb/projects/wrangler/.claude-config/system_prompt.md"
+# 2. System Prompt (from cached extraction or fallback)
+# First, try project-local .claude-config
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_CONFIG="$SCRIPT_DIR/../.claude-config"
+
+# Fallback locations to try
+CONFIG_LOCATIONS=(
+    "$PROJECT_CONFIG"
+    "$HOME/medb/projects/wrangler/.claude-config"
+    "$HOME/.claude-config"
+)
+
+SYSTEM_PROMPT_FILE=""
+TOOLS_FILE=""
+
+for config_dir in "${CONFIG_LOCATIONS[@]}"; do
+    if [ -f "$config_dir/system_prompt.md" ]; then
+        SYSTEM_PROMPT_FILE="$config_dir/system_prompt.md"
+        TOOLS_FILE="$config_dir/tools.json"
+        break
+    fi
+done
+
+# If no config found, check if we should extract
+if [ -z "$SYSTEM_PROMPT_FILE" ]; then
+    echo "Warning: No Claude config found. Run './scripts/extract-claude-config-manual.sh' to create one." >&2
+    # Create placeholder
+    SYSTEM_PROMPT_FILE="/dev/null"
+    TOOLS_FILE="/dev/null"
+fi
+
 echo '"systemPrompt": '
-read_file_json "$SYSTEM_PROMPT_REF"
+read_file_json "$SYSTEM_PROMPT_FILE"
+echo ','
+
+# 2b. Tools Array
+echo '"toolsArray": '
+if [ -f "$TOOLS_FILE" ] && [ -s "$TOOLS_FILE" ]; then
+    cat "$TOOLS_FILE"
+else
+    echo '[]'
+fi
 echo ','
 
 # 3. Global CLAUDE.md
@@ -121,6 +159,81 @@ list_dir_json "$CLAUDE_DIR/output-styles"
 echo ','
 echo '  "project": '
 list_dir_json "$TARGET_CWD/.claude/output-styles"
+echo ','
+# 7b. Active output style name
+echo '  "activeName": '
+ACTIVE_STYLE=""
+if [ -f "$LOCAL_SETTINGS" ]; then
+    ACTIVE_STYLE=$(python3 -c "
+import json
+try:
+    with open('$LOCAL_SETTINGS', 'r') as f:
+        data = json.load(f)
+    style_name = data.get('outputStyle', '')
+    print(style_name)
+except:
+    pass
+" 2>/dev/null)
+fi
+
+if [ -n "$ACTIVE_STYLE" ]; then
+    echo "\"$ACTIVE_STYLE\""
+else
+    echo 'null'
+fi
+echo ','
+
+# 7c. All output styles with full content
+echo '  "all": '
+python3 -c "
+import json
+import os
+
+user_styles_dir = '$CLAUDE_DIR/output-styles'
+project_styles_dir = '$TARGET_CWD/.claude/output-styles'
+
+all_styles = {}
+
+# Load user output styles
+if os.path.exists(user_styles_dir):
+    for filename in os.listdir(user_styles_dir):
+        if filename.endswith('.md'):
+            filepath = os.path.join(user_styles_dir, filename)
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                style_id = filename[:-3]  # Remove .md extension
+                all_styles[style_id] = {
+                    'id': style_id,
+                    'name': style_id,
+                    'path': filepath,
+                    'content': content,
+                    'source': 'user'
+                }
+            except:
+                pass
+
+# Load project output styles (can override user styles)
+if os.path.exists(project_styles_dir):
+    for filename in os.listdir(project_styles_dir):
+        if filename.endswith('.md'):
+            filepath = os.path.join(project_styles_dir, filename)
+            try:
+                with open(filepath, 'r') as f:
+                    content = f.read()
+                style_id = filename[:-3]  # Remove .md extension
+                all_styles[style_id] = {
+                    'id': style_id,
+                    'name': style_id,
+                    'path': filepath,
+                    'content': content,
+                    'source': 'project'
+                }
+            except:
+                pass
+
+print(json.dumps(all_styles))
+"
 echo '},'
 
 # 8. Installed plugins
