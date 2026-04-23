@@ -1,124 +1,159 @@
 #!/usr/bin/env bash
-# run.sh - Launch Visual Context web app for a target project directory
-# Usage: ./run.sh [target_directory]
-#        visual-context (when installed as alias)
+# run.sh - Launch Visual Context in Claude or Codex mode using Vite.
 
-set -e
+set -euo pipefail
 
-# Determine the absolute path to the visual-context repo
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VISUAL_CONTEXT_DIR="$SCRIPT_DIR"
+APP_DIR="$SCRIPT_DIR"
+GENERATED_DIR="$APP_DIR/public/generated"
+CLAUDE_OUTPUT="$GENERATED_DIR/context.json"
+CODEX_OUTPUT="$GENERATED_DIR/codex-context.md"
 
-# Target project directory (defaults to current working directory)
-TARGET_DIR="${1:-$PWD}"
-
-# Check if directory exists first
-if [ ! -d "$TARGET_DIR" ]; then
-    echo "Error: Target directory does not exist: $TARGET_DIR" >&2
-    exit 1
-fi
-
-# Resolve to absolute path
-TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
-
-# Output file location (always in visual-context repo)
-CONTEXT_JSON="$VISUAL_CONTEXT_DIR/context.json"
-
-# Port for HTTP server (try multiple ports if first is occupied)
+MODE="claude"
+TARGET_DIR="$PWD"
+CODEX_SOURCE=""
+OPEN_BROWSER=1
 PORTS=(8080 8081 8082 8083 8084 8085)
 PORT=""
 
-# Find an available port
+usage() {
+  cat <<EOF
+Usage:
+  ./run.sh [target_directory]
+  ./run.sh --claude [target_directory]
+  ./run.sh --codex <startup-context.md>
+  ./run.sh --no-open
+
+Examples:
+  ./run.sh
+  ./run.sh /path/to/project
+  ./run.sh --codex /path/to/codex-startup-context.md
+EOF
+}
+
 for p in "${PORTS[@]}"; do
-    if ! lsof -i ":$p" >/dev/null 2>&1; then
-        PORT=$p
-        break
-    fi
+  if ! lsof -i ":$p" >/dev/null 2>&1; then
+    PORT="$p"
+    break
+  fi
 done
 
 if [ -z "$PORT" ]; then
-    echo "Error: No available ports found (tried ${PORTS[*]})" >&2
-    exit 1
+  echo "Error: no available ports found (${PORTS[*]})" >&2
+  exit 1
 fi
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --claude)
+      MODE="claude"
+      if [ $# -gt 1 ] && [[ ! "$2" =~ ^-- ]]; then
+        TARGET_DIR="$2"
+        shift
+      fi
+      ;;
+    --codex)
+      MODE="codex"
+      if [ $# -lt 2 ]; then
+        echo "Error: --codex requires a file path" >&2
+        usage
+        exit 1
+      fi
+      CODEX_SOURCE="$2"
+      shift
+      ;;
+    --no-open)
+      OPEN_BROWSER=0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      if [ "$MODE" = "codex" ]; then
+        echo "Error: unexpected argument in codex mode: $1" >&2
+        usage
+        exit 1
+      fi
+      if [ -f "$1" ]; then
+        MODE="codex"
+        CODEX_SOURCE="$1"
+      else
+        TARGET_DIR="$1"
+      fi
+      ;;
+  esac
+  shift
+done
 
-echo -e "${BLUE}Visual Context Launcher${NC}"
-echo "========================"
-echo ""
-echo "Target directory: $TARGET_DIR"
-echo "Output file: $CONTEXT_JSON"
-echo ""
-
-# Check if scan-context.sh exists
-SCAN_SCRIPT="$VISUAL_CONTEXT_DIR/scripts/scan-context.sh"
-if [ ! -f "$SCAN_SCRIPT" ]; then
-    echo -e "${RED}Error: Cannot find scan-context.sh at $SCAN_SCRIPT${NC}" >&2
+if [ "$MODE" = "claude" ]; then
+  if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: target directory does not exist: $TARGET_DIR" >&2
     exit 1
+  fi
+  TARGET_DIR="$(cd "$TARGET_DIR" && pwd)"
+else
+  if [ ! -f "$CODEX_SOURCE" ]; then
+    echo "Error: codex snapshot does not exist: $CODEX_SOURCE" >&2
+    exit 1
+  fi
+  CODEX_SOURCE="$(cd "$(dirname "$CODEX_SOURCE")" && pwd)/$(basename "$CODEX_SOURCE")"
 fi
 
-# Run the scanner
-echo -e "${YELLOW}Scanning context...${NC}"
-if ! "$SCAN_SCRIPT" "$TARGET_DIR" > "$CONTEXT_JSON" 2>&1; then
-    echo -e "${RED}Error: Failed to scan context${NC}" >&2
-    echo "Check that scan-context.sh is working correctly" >&2
-    exit 1
+if ! command -v node >/dev/null 2>&1; then
+  echo "Error: node is required." >&2
+  exit 1
 fi
 
-echo -e "${GREEN}Context scan complete${NC}"
-echo ""
+if ! command -v npm >/dev/null 2>&1; then
+  echo "Error: npm is required." >&2
+  exit 1
+fi
 
-# Start HTTP server
-echo -e "${YELLOW}Starting HTTP server on port $PORT...${NC}"
+mkdir -p "$GENERATED_DIR"
 
-# Function to handle cleanup on exit
+if [ ! -d "$APP_DIR/node_modules" ]; then
+  echo "Installing dependencies..."
+  (cd "$APP_DIR" && npm install)
+fi
+
+if [ "$MODE" = "claude" ]; then
+  echo "Scanning Claude context from $TARGET_DIR"
+  (cd "$APP_DIR" && npm run scan -- "$TARGET_DIR" --output "$CLAUDE_OUTPUT")
+else
+  echo "Copying Codex snapshot from $CODEX_SOURCE"
+  cp "$CODEX_SOURCE" "$CODEX_OUTPUT"
+fi
+
 cleanup() {
-    echo ""
-    echo -e "${YELLOW}Shutting down server...${NC}"
-    if [ ! -z "$SERVER_PID" ]; then
-        kill $SERVER_PID 2>/dev/null || true
-    fi
-    echo -e "${GREEN}Server stopped${NC}"
-    exit 0
+  if [ -n "${SERVER_PID:-}" ]; then
+    kill "$SERVER_PID" >/dev/null 2>&1 || true
+  fi
 }
 
-# Trap SIGINT (Ctrl+C) and SIGTERM
-trap cleanup SIGINT SIGTERM
+trap cleanup EXIT INT TERM
 
-# Start Python HTTP server in the background
-cd "$VISUAL_CONTEXT_DIR"
-python3 -m http.server $PORT >/dev/null 2>&1 &
+echo "Starting Visual Context at http://127.0.0.1:$PORT"
+(cd "$APP_DIR" && npm run dev -- --host 127.0.0.1 --port "$PORT" --strictPort >/tmp/visual-context-vite.log 2>&1) &
 SERVER_PID=$!
 
-# Wait a moment for server to start
-sleep 1
+for _ in $(seq 1 30); do
+  if curl -fsS "http://127.0.0.1:$PORT" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 
-# Check if server started successfully
-if ! kill -0 $SERVER_PID 2>/dev/null; then
-    echo -e "${RED}Error: Failed to start HTTP server${NC}" >&2
-    echo "Port $PORT may already be in use" >&2
-    exit 1
+if ! kill -0 "$SERVER_PID" >/dev/null 2>&1; then
+  echo "Error: Vite failed to start. See /tmp/visual-context-vite.log" >&2
+  exit 1
 fi
 
-echo -e "${GREEN}Server running at http://localhost:$PORT${NC}"
-echo ""
-
-# Open browser (macOS)
-if command -v open >/dev/null 2>&1; then
-    echo -e "${YELLOW}Opening browser...${NC}"
-    open "http://localhost:$PORT"
+if [ "$OPEN_BROWSER" -eq 1 ] && command -v open >/dev/null 2>&1; then
+  open "http://127.0.0.1:$PORT"
 else
-    echo -e "${YELLOW}Please open http://localhost:$PORT in your browser${NC}"
+  echo "Open http://127.0.0.1:$PORT"
 fi
 
-echo ""
-echo -e "${BLUE}Press Ctrl+C to stop the server${NC}"
-echo ""
-
-# Wait for the server process
-wait $SERVER_PID
+echo "Press Ctrl+C to stop the server"
+wait "$SERVER_PID"
