@@ -1,5 +1,11 @@
+# Dependencies and build output
+node_modules/
+dist/
+*.tsbuildinfo
+
 # Generated data (contains user-specific paths)
-context.json
+public/generated/context.json
+public/generated/codex-context.md
 
 # OS files
 .DS_Store
